@@ -4,6 +4,7 @@
   "description": "Utility to extract numbers and other related entities like dates from text",
   "main": "natural-number.js",
   "scripts": {
+    "postinstall":"ln -s `pwd`/data node_modules/js-quantities-all/.",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {

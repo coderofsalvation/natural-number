@@ -4,137 +4,144 @@ var parse_dates = require ( 'parse-dates' )
 var parse_quantity = require('js-quantities-all')
 
 var async=require('async');
-
+var units = false
 var natNumber=function(options){
 
-	natNumber.options=_.extend({
-		lang:'en',
-		lang_name:'english',
-		include_formatted:true,
-		include_ordinals:true
-	},options)
+  natNumber.options=_.extend({
+    lang:'en',
+    lang_name:'english',
+    include_formatted:true,
+    include_ordinals:true
+  },options)
 }
 
 natNumber.prototype={
 
-	parse:function(string,omit_string,callback){
-		// console.log(string,natNumber.options);
+  parse:function(string,opts,callback){
 
-		// console.log(readint('one', natNumber.options.lang))
-		var parsed={}
+    units=parse_quantity.getUnits()
+    if( opts.measures )
+      for ( var i in opts.measures ) units[i] = opts.measures[i]
+    // console.log(string,natNumber.options);
 
-		async.waterfall([
-			//start waterfall
-			function(callback){
-				callback(null,string,parsed)
-			},
-			//numbers
-			natNumber.prototype.parse_numbers,
-			//quantities
-			natNumber.prototype.parse_quantities,
-			// dates
-			natNumber.prototype.parse_dates
+    // console.log(readint('one', natNumber.options.lang))
+    var parsed={}
+
+    async.waterfall([
+      //start waterfall
+      function(callback){
+        callback(null,string,parsed)
+      },
+      //numbers
+      natNumber.prototype.parse_numbers,
+      //quantities
+      natNumber.prototype.parse_quantities,
+      // dates
+      natNumber.prototype.parse_dates
 
 
-		],function (err,text, parsed) {
-		    // result now equals 'done'
+    ],function (err,text, parsed) {
+        // result now equals 'done'
 
-		    //if omit string
-		    if(omit_string){
-			    for(var key in parsed){
-			    	parsed[key]=_.omit(parsed[key],'string');
-			    }	
-		    }
-		    
+        //if omit string
+        if(opts.omit_string){
+          for(var key in parsed){
+            parsed[key]=_.omit(parsed[key],'string');
+          } 
+        }
+        if( parsed.measures.measures ){
+          parsed.measureData = {}
+          parsed.measures.measures.map( function(m){
+            parsed.measureData[ m.units[0] ] = m.val
+          }) 
+        }
+        callback(parsed)
+    })
 
-		    callback(parsed)
-		})
+  
+  },
 
-	
-	},
+  parse_dates:function(string,parsed,callback){
+    var p=parse_dates(string);
+    parsed=_.merge(parsed,{dates:p});
+    callback(null,string,parsed)
+  },
+  parse_quantities:function(string,parsed,callback){
 
-	parse_dates:function(string,parsed,callback){
-		var p=parse_dates(string);
-		parsed=_.merge(parsed,{dates:p});
-		callback(null,string,parsed)
-	},
-	parse_quantities:function(string,parsed,callback){
+    var toAll=[]
+    var QtyRegex=new RegExp('\\b[0-9]+\\s*('+units.join('|')+')\\b','ig');
 
-		var units=parse_quantity.getUnits(),
-			toAll=[];;
-		var QtyRegex=new RegExp('\\b[0-9]+\\s*('+units.join('|')+')\\b','ig');
+    // pick all values looking like quantities i.e 10 l, 15 kgs, 5BG etc
+    var matches=string.match(QtyRegex);
 
-		// pick all values looking like quantities i.e 10 l, 15 kgs, 5BG etc
-		var matches=string.match(QtyRegex);
+    // var out=_.clone(string);
+    // var annotated=_.clone(string);
+    var measures={
 
-		// var out=_.clone(string);
-		// var annotated=_.clone(string);
-		var measures={
+      measures:[],
+      string:{
+        in:_.clone(string),
+        out:_.clone(string),
+        annotated:_.clone(string)
+      } 
+    };
 
-			measures:[],
-			string:{
-				in:_.clone(string),
-				out:_.clone(string),
-				annotated:_.clone(string)
-			}
-		};
+    if(matches){
+      //loop through the units converting each
+      matches.forEach(function(measure){
 
-		if(matches){
-			//loop through the units converting each
-			matches.forEach(function(measure){
+        //set measure
+        qty = parse_quantity(measure); // factory
+        //convert to all applicable units
+        toAll=qty.toAll();  
 
-				//set measure
-				qty = parse_quantity(measure); // factory
-				//convert to all applicable units
-				toAll=qty.toAll();	
+        //replace with first str instance
+        measures.string.annotated=measures.string.annotated.replace(measure,"{MEASURE: "+toAll[0].str+"}");
 
-				//replace with first str instance
-				measures.string.annotated=measures.string.annotated.replace(measure,"{MEASURE: "+toAll[0].str+"}");
+        measures.measures=_.union(measures.measures,toAll);
+      })
+  
+    }
 
-				measures.measures=_.union(measures.measures,toAll);
-			})
-	
-		}
+    // return measures;
+    parsed=_.merge(parsed,{measures:measures});
+    callback(null,string,parsed)
+    
+  },
+  parse_numbers: function(string,parsed,callback){
+    var p=parse_numbers(string);
+    parsed=_.merge(parsed,{numbers:p});
 
-		// return measures;
-		parsed=_.merge(parsed,{measures:measures});
-		callback(null,string,parsed)
-		
-	},
-	parse_numbers: function(string,parsed,callback){
-		var p=parse_numbers(string);
-		parsed=_.merge(parsed,{numbers:p});
+    callback(null,p.string.out,parsed)
+  },
 
-		callback(null,p.string.out,parsed)
-	},
+  splitWords:function(string,stopwords){
 
-	splitWords:function(string,stopwords){
+    var words=[];
 
-		var words=[];
+    S(string).strip(stopwords) //remove certain noise words within numbers
+         .collapseWhitespace() //remove puncts
+         .trim()               
+         .split(' ')
+         .forEach(function(word){
 
-		S(string).strip(stopwords) //remove certain noise words within numbers
-				 .collapseWhitespace() //remove puncts
-				 .trim()							 
-				 .split(' ')
-				 .forEach(function(word){
+          
+          word=word
+              .replace(/[\.\?!]$/,'')//remove some ending puncts
+              .replace(/([a-z])([A-Z])/g, '$1' + ' ' + '$2') //decamelize
+              .replace(/([^a-zA-Z0-9])([a-zA-Z])/g, '$1' + ' ' + '$2') //decamelize on non letters
+              .replace(/([a-zA-Z])([^a-zA-Z0-9])/g, '$1' + ' ' + '$2') //decamelize on non letters
+              .split(' ') //add all the words
+              .forEach(function(w){
+                if(w.length){words.push(w);}                
+              });
 
-				 	
-				 	word=word
-				 			.replace(/[\.\?!]$/,'')//remove some ending puncts
-				 			.replace(/([a-z])([A-Z])/g, '$1' + ' ' + '$2') //decamelize
-				 			.replace(/([^a-zA-Z0-9])([a-zA-Z])/g, '$1' + ' ' + '$2') //decamelize on non letters
-				 			.replace(/([a-zA-Z])([^a-zA-Z0-9])/g, '$1' + ' ' + '$2') //decamelize on non letters
-				 			.split(' ') //add all the words
-				 			.forEach(function(w){
-				 				if(w.length){words.push(w);}				 				
-				 			});
+         });
 
-				 });
+    // console.log(words)
+    return words;
 
-		// console.log(words)
-		return words;
-
-	}
+  }
 }
 
 
